@@ -65,5 +65,27 @@
       "end": "2:00",
       "note": "Satya Nadella — From models to systems with scaffolds, memory, agents. — VERIFY TIMESTAMP"
     }
+    ,
+    {
+      "id": "jensen-agentic-inflection",
+      "url": "https://www.youtube.com/watch?v=0saM9rLGj0Y",
+      "start": "0:00",
+      "end": "0:40",
+      "note": "Jensen Huang — Agentic AI inflection point (NVIDIA Q4 FY2026 Earnings, Feb 25 2026). Quote: 'The world is now awakened to the agentic AI inflection.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "jensen-digital-employees",
+      "url": "https://www.youtube.com/watch?v=0saM9rLGj0Y",
+      "start": "0:40",
+      "end": "1:20",
+      "note": "Jensen Huang — 42,000 biological + hundreds of thousands of digital employees (NVIDIA Q4 FY2026 Earnings). IT becomes HR for agentic AI. — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "jensen-ces-computing-revolution",
+      "url": "https://www.youtube.com/watch?v=M8fL0RUmbP0",
+      "start": "0:00",
+      "end": "0:30",
+      "note": "Jensen Huang — $10 trillion computing revolution, CES 2026 (Jan 5-6). — VERIFY TIMESTAMP"
+    }
   ]
 }
