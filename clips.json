@@ -1,19 +1,69 @@
 {
-  "title": "My Compilation",
+  "title": "AI Leadership — CEO Insights Compilation",
+  "description": "Sam Altman + Satya Nadella on AI capabilities, companies, and the future of work",
   "clips": [
     {
-      "id": "clip-1",
-      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-      "start": "0:43",
-      "end": "1:10",
-      "note": "Chorus section"
+      "id": "altman-100x-vision",
+      "url": "https://www.youtube.com/watch?v=Wpxv-8nG8ec",
+      "start": "0:00",
+      "end": "0:30",
+      "note": "Sam Altman — 100x capability vision (OpenAI Town Hall, Jan 2026). Quote: 'Assume we will have a model that is 100 times more capable...' — VERIFY TIMESTAMP"
     },
     {
-      "id": "clip-2",
-      "url": "https://www.youtube.com/watch?v=9bZkp7q19f0",
-      "start": "0:15",
-      "end": "0:40",
-      "note": "Dance intro"
+      "id": "altman-gpt5-cost",
+      "url": "https://www.youtube.com/watch?v=Wpxv-8nG8ec",
+      "start": "0:30",
+      "end": "1:00",
+      "note": "Sam Altman — GPT-5 level intelligence at 100x less cost (Town Hall). Quote: 'GPT-5.2-level intelligence by end of 2027 for at least 100x less' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "altman-full-ai-companies",
+      "url": "https://www.youtube.com/watch?v=eFinF8AJD8A",
+      "start": "0:00",
+      "end": "0:30",
+      "note": "Sam Altman — Full AI companies (Cisco AI Summit, Feb 3 2026). Quote: 'The upper limit, I think, is full AI companies.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "altman-ai-coworkers",
+      "url": "https://www.youtube.com/watch?v=eFinF8AJD8A",
+      "start": "0:30",
+      "end": "1:00",
+      "note": "Sam Altman — AI co-workers warning (Cisco AI Summit). Quote: 'Companies not set up to adopt AI co-workers will be at a huge disadvantage.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "altman-run-company",
+      "url": "https://www.youtube.com/watch?v=bQITwmqogo8",
+      "start": "0:00",
+      "end": "0:30",
+      "note": "Sam Altman — Models will change what it means to run a company (Morgan Stanley TMT / India AI Summit). Quote: 'Models coming out in the next few months will change what it means to run a good company.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "nadella-infinite-minds",
+      "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
+      "start": "0:00",
+      "end": "0:30",
+      "note": "Satya Nadella — Managers of infinite minds (WEF Davos, Jan 2026). Quote: 'All of us are going to be managers of infinite minds.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "nadella-full-stack-builders",
+      "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
+      "start": "0:30",
+      "end": "1:00",
+      "note": "Satya Nadella — LinkedIn full-stack builders role (WEF Davos). Biggest structural change to software teams in his career. — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "nadella-2026-diffusion",
+      "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
+      "start": "1:00",
+      "end": "1:30",
+      "note": "Satya Nadella — 2026 as the diffusion year. Quote: 'We have moved past initial discovery and are entering widespread diffusion.' — VERIFY TIMESTAMP"
+    },
+    {
+      "id": "nadella-models-to-systems",
+      "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
+      "start": "1:30",
+      "end": "2:00",
+      "note": "Satya Nadella — From models to systems with scaffolds, memory, agents. — VERIFY TIMESTAMP"
     }
   ]
 }
