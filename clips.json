@@ -1,0 +1,19 @@
+{
+  "title": "My Compilation",
+  "clips": [
+    {
+      "id": "clip-1",
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "start": "0:43",
+      "end": "1:10",
+      "note": "Chorus section"
+    },
+    {
+      "id": "clip-2",
+      "url": "https://www.youtube.com/watch?v=9bZkp7q19f0",
+      "start": "0:15",
+      "end": "0:40",
+      "note": "Dance intro"
+    }
+  ]
+}
