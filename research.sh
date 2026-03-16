@@ -1,0 +1,712 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESEARCH_DIR="$SCRIPT_DIR/research"
+CAPTIONS_DIR="$RESEARCH_DIR/captions"
+SLIDES_DIR="$RESEARCH_DIR/slides"
+SCORES_DIR="$RESEARCH_DIR/scores"
+VIDEOS_FILE="$RESEARCH_DIR/videos.jsonl"
+BRIEFING_FILE="$SCRIPT_DIR/briefing.md"
+CLIPS_FILE="$SCRIPT_DIR/clips-research.json"
+
+# Defaults
+LOOKBACK_DAYS=60
+MIN_SCORE=7
+TOP_N=20
+
+# ---------------------------------------------------------------------------
+# Speakers
+# ---------------------------------------------------------------------------
+
+SPEAKERS=(
+    "Sam Altman"
+    "Satya Nadella"
+    "Jensen Huang"
+    "Dario Amodei"
+    "Sundar Pichai"
+    "Mark Zuckerberg"
+    "Elon Musk"
+    "Yann LeCun"
+    "Demis Hassabis"
+    "Mustafa Suleyman"
+    "Andrew Ng"
+    "Fei-Fei Li"
+    "Reid Hoffman"
+    "Vinod Khosla"
+    "Eric Schmidt"
+    "Bill Gates"
+    "Emad Mostaque"
+    "Ilya Sutskever"
+    "Greg Brockman"
+    "Yoshua Bengio"
+    "Geoffrey Hinton"
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+info()    { printf "\033[1;34m[%s]\033[0m  %s\n" "$1" "$2"; }
+warn()    { printf "\033[1;33m[WARN]\033[0m  %s\n" "$*"; }
+error()   { printf "\033[1;31m[ERROR]\033[0m %s\n" "$*"; exit 1; }
+success() { printf "\033[1;32m[DONE]\033[0m  %s\n" "$*"; }
+
+slugify() {
+    echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-'
+}
+
+check_deps() {
+    local missing=()
+    command -v yt-dlp  >/dev/null 2>&1 || missing+=(yt-dlp)
+    command -v ffmpeg  >/dev/null 2>&1 || missing+=(ffmpeg)
+    command -v claude  >/dev/null 2>&1 || missing+=(claude)
+    command -v jq      >/dev/null 2>&1 || missing+=(jq)
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        error "Missing dependencies: ${missing[*]}. Install them and retry."
+    fi
+}
+
+ensure_dirs() {
+    mkdir -p "$CAPTIONS_DIR" "$SLIDES_DIR" "$SCORES_DIR"
+}
+
+date_after() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+        date -v-"${LOOKBACK_DAYS}d" +%Y%m%d
+    else
+        date -d "-${LOOKBACK_DAYS} days" +%Y%m%d
+    fi
+}
+
+today() {
+    date +%Y-%m-%d
+}
+
+# ---------------------------------------------------------------------------
+# PHASE 1: SEARCH
+# ---------------------------------------------------------------------------
+
+search_videos() {
+    info "SEARCH" "Searching YouTube for AI leader talks (last ${LOOKBACK_DAYS} days)..."
+    local after
+    after=$(date_after)
+    info "SEARCH" "Date filter: after $after"
+
+    local total_found=0
+
+    # Clear previous results but preserve cache
+    > "$VIDEOS_FILE"
+
+    for speaker in "${SPEAKERS[@]}"; do
+        local slug
+        slug=$(slugify "$speaker")
+        info "SEARCH" "Searching: $speaker"
+
+        local search_terms=(
+            "${speaker} AI 2026"
+            "${speaker} AI predictions"
+            "${speaker} artificial intelligence"
+        )
+
+        for term in "${search_terms[@]}"; do
+            # yt-dlp search: get id and title pairs
+            local raw_output
+            if raw_output=$(yt-dlp "ytsearch5:${term}" \
+                --get-id --get-title \
+                --dateafter "$after" \
+                --no-download \
+                --no-warnings \
+                --ignore-errors \
+                2>/dev/null); then
+
+                # Parse pairs: title on odd lines, id on even lines
+                local line_num=0
+                local title=""
+                while IFS= read -r line; do
+                    line_num=$((line_num + 1))
+                    if (( line_num % 2 == 1 )); then
+                        title="$line"
+                    else
+                        local vid_id="$line"
+                        # Validate it looks like a YouTube ID (11 chars)
+                        if [[ ${#vid_id} -ge 8 && ${#vid_id} -le 15 ]]; then
+                            printf '%s\n' "$(jq -n \
+                                --arg id "$vid_id" \
+                                --arg title "$title" \
+                                --arg speaker "$speaker" \
+                                --arg slug "$slug" \
+                                '{id: $id, title: $title, speaker: $speaker, slug: $slug}')" \
+                                >> "$VIDEOS_FILE"
+                            total_found=$((total_found + 1))
+                        fi
+                    fi
+                done <<< "$raw_output"
+            fi
+
+            # Rate limit
+            sleep 2
+        done
+    done
+
+    # Deduplicate by video ID
+    if [[ -s "$VIDEOS_FILE" ]]; then
+        local before_dedup
+        before_dedup=$(wc -l < "$VIDEOS_FILE" | tr -d ' ')
+        local deduped
+        deduped=$(jq -s 'unique_by(.id)' "$VIDEOS_FILE")
+        # Rewrite as JSONL
+        echo "$deduped" | jq -c '.[]' > "$VIDEOS_FILE"
+        local after_dedup
+        after_dedup=$(wc -l < "$VIDEOS_FILE" | tr -d ' ')
+        success "Found $before_dedup results, $after_dedup unique videos after dedup"
+    else
+        warn "No videos found. Try broadening the search or increasing --days."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# PHASE 2: CAPTIONS
+# ---------------------------------------------------------------------------
+
+fetch_captions() {
+    info "CAPTION" "Downloading captions for discovered videos..."
+
+    [[ -s "$VIDEOS_FILE" ]] || error "No videos found. Run search phase first."
+
+    local total=0 downloaded=0 cached=0
+
+    while IFS= read -r line; do
+        local vid_id
+        vid_id=$(echo "$line" | jq -r '.id')
+        total=$((total + 1))
+
+        # Check cache
+        if ls "$CAPTIONS_DIR/${vid_id}"*.vtt >/dev/null 2>&1; then
+            cached=$((cached + 1))
+            continue
+        fi
+
+        local title
+        title=$(echo "$line" | jq -r '.title')
+        info "CAPTION" "Fetching: $title ($vid_id)"
+
+        if yt-dlp \
+            --write-auto-subs \
+            --sub-lang en \
+            --skip-download \
+            --no-warnings \
+            -o "$CAPTIONS_DIR/%(id)s" \
+            "https://www.youtube.com/watch?v=${vid_id}" \
+            2>/dev/null; then
+            downloaded=$((downloaded + 1))
+        else
+            warn "Failed to get captions for $vid_id"
+        fi
+
+        sleep 2
+    done < "$VIDEOS_FILE"
+
+    success "Captions: $downloaded new, $cached cached, $total total videos"
+}
+
+# ---------------------------------------------------------------------------
+# PHASE 3: SCORING
+# ---------------------------------------------------------------------------
+
+# Parse VTT into 7-10 second windows
+# Output: JSON lines with {start_sec, end_sec, start_fmt, end_fmt, text}
+parse_vtt_windows() {
+    local vtt_file="$1"
+    local window_sec=8  # Target ~8 seconds per window
+
+    # Extract timestamps and text from VTT
+    # VTT format: timestamp lines like "00:01:23.456 --> 00:01:26.789" followed by text
+    awk '
+    BEGIN { collecting=0; text=""; start=""; end="" }
+    /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
+        if (match($0, /([0-9][0-9]):([0-9][0-9]):([0-9][0-9])\.([0-9]+) --> ([0-9][0-9]):([0-9][0-9]):([0-9][0-9])\.([0-9]+)/, arr)) {
+            s = arr[1]*3600 + arr[2]*60 + arr[3]
+            e = arr[5]*3600 + arr[6]*60 + arr[7]
+            if (start == "") start = s
+            end = e
+        }
+        collecting=1
+        next
+    }
+    /^$/ || /^NOTE/ || /^WEBVTT/ || /^Kind:/ || /^Language:/ {
+        if (text != "" && start != "") {
+            printf "%d\t%d\t%s\n", start, end, text
+            text=""
+            start=""
+            end=""
+        }
+        collecting=0
+        next
+    }
+    collecting==1 {
+        gsub(/<[^>]*>/, "")  # Strip HTML tags
+        if (text != "") text = text " " $0
+        else text = $0
+    }
+    END {
+        if (text != "" && start != "") {
+            printf "%d\t%d\t%s\n", start, end, text
+        }
+    }
+    ' "$vtt_file" | \
+    awk -v window="$window_sec" '
+    BEGIN { FS="\t"; buf_start=-1; buf_end=-1; buf_text="" }
+    {
+        s=$1; e=$2; t=$3
+        if (buf_start < 0) {
+            buf_start=s; buf_end=e; buf_text=t
+            next
+        }
+        if (e - buf_start <= window + 2) {
+            buf_end=e
+            buf_text=buf_text " " t
+        } else {
+            # Emit current window
+            mins=int(buf_start/60)
+            secs=buf_start%60
+            emin=int(buf_end/60)
+            esec=buf_end%60
+            printf "%d\t%d\t%d:%02d\t%d:%02d\t%s\n", buf_start, buf_end, mins, secs, emin, esec, buf_text
+            buf_start=s; buf_end=e; buf_text=t
+        }
+    }
+    END {
+        if (buf_start >= 0) {
+            mins=int(buf_start/60)
+            secs=buf_start%60
+            emin=int(buf_end/60)
+            esec=buf_end%60
+            printf "%d\t%d\t%d:%02d\t%d:%02d\t%s\n", buf_start, buf_end, mins, secs, emin, esec, buf_text
+        }
+    }
+    '
+}
+
+score_quotes() {
+    info "SCORE" "Scoring caption windows with Claude CLI..."
+
+    [[ -s "$VIDEOS_FILE" ]] || error "No videos found. Run search phase first."
+
+    # Collect all scored results
+    local all_scores_file="$SCORES_DIR/all_scores.jsonl"
+    > "$all_scores_file"
+
+    local vid_count=0 window_count=0 scored_count=0
+
+    while IFS= read -r video_line; do
+        local vid_id speaker title slug
+        vid_id=$(echo "$video_line" | jq -r '.id')
+        speaker=$(echo "$video_line" | jq -r '.speaker')
+        title=$(echo "$video_line" | jq -r '.title')
+        slug=$(echo "$video_line" | jq -r '.slug')
+
+        # Find VTT file
+        local vtt_file
+        vtt_file=$(ls "$CAPTIONS_DIR/${vid_id}"*.vtt 2>/dev/null | head -1)
+        [[ -n "$vtt_file" ]] || continue
+
+        vid_count=$((vid_count + 1))
+        info "SCORE" "Processing: $speaker — $title"
+
+        # Check for cached scores
+        local score_cache="$SCORES_DIR/${vid_id}.jsonl"
+        if [[ -f "$score_cache" ]]; then
+            cat "$score_cache" >> "$all_scores_file"
+            info "SCORE" "  (cached)"
+            continue
+        fi
+
+        > "$score_cache"
+
+        # Parse VTT into windows and score each
+        while IFS=$'\t' read -r start_sec end_sec start_fmt end_fmt text; do
+            window_count=$((window_count + 1))
+
+            # Skip very short or empty text
+            local word_count
+            word_count=$(echo "$text" | wc -w | tr -d ' ')
+            if [[ $word_count -lt 8 ]]; then
+                continue
+            fi
+
+            # Score with Claude CLI
+            local prompt="Score this quote 1-10 for poignancy as an AI prediction. Consider: boldness, specificity, quotability, novelty. Only score highly if it contains a genuine prediction or bold claim about AI's future. Return ONLY valid JSON, no markdown: {\"score\": N, \"reason\": \"...\", \"is_prediction\": true/false}
+
+Speaker: ${speaker}
+Quote: \"${text}\""
+
+            local result
+            if result=$(echo "$prompt" | timeout 30 claude --print 2>/dev/null); then
+                # Extract JSON from response (handle case where Claude adds extra text)
+                local json_result
+                json_result=$(echo "$result" | grep -o '{[^}]*}' | head -1)
+
+                if [[ -n "$json_result" ]]; then
+                    local score is_pred
+                    score=$(echo "$json_result" | jq -r '.score // 0' 2>/dev/null || echo "0")
+                    is_pred=$(echo "$json_result" | jq -r '.is_prediction // false' 2>/dev/null || echo "false")
+
+                    if [[ "$is_pred" == "true" && "$score" -ge "$MIN_SCORE" ]] 2>/dev/null; then
+                        scored_count=$((scored_count + 1))
+                        local entry
+                        entry=$(jq -n \
+                            --arg vid_id "$vid_id" \
+                            --arg speaker "$speaker" \
+                            --arg title "$title" \
+                            --arg slug "$slug" \
+                            --arg text "$text" \
+                            --argjson score "$score" \
+                            --arg reason "$(echo "$json_result" | jq -r '.reason // ""')" \
+                            --arg start_fmt "$start_fmt" \
+                            --arg end_fmt "$end_fmt" \
+                            --argjson start_sec "$start_sec" \
+                            --argjson end_sec "$end_sec" \
+                            '{
+                                vid_id: $vid_id,
+                                speaker: $speaker,
+                                title: $title,
+                                slug: $slug,
+                                text: $text,
+                                score: $score,
+                                reason: $reason,
+                                start: $start_fmt,
+                                end: $end_fmt,
+                                start_sec: $start_sec,
+                                end_sec: $end_sec
+                            }')
+                        echo "$entry" >> "$score_cache"
+                        echo "$entry" >> "$all_scores_file"
+                        info "SCORE" "  [${score}/10] ${text:0:80}..."
+                    fi
+                fi
+            else
+                warn "Claude CLI failed/timed out — skipping window"
+            fi
+        done < <(parse_vtt_windows "$vtt_file")
+
+    done < "$VIDEOS_FILE"
+
+    # Sort by score descending and keep top N
+    if [[ -s "$all_scores_file" ]]; then
+        local sorted
+        sorted=$(jq -s 'sort_by(-.score) | .[:'"$TOP_N"']' "$all_scores_file")
+        echo "$sorted" | jq -c '.[]' > "$all_scores_file"
+        local final_count
+        final_count=$(wc -l < "$all_scores_file" | tr -d ' ')
+        success "Scored $window_count windows from $vid_count videos. Top $final_count results (score >= $MIN_SCORE)."
+    else
+        warn "No quotes scored above threshold ($MIN_SCORE)."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# PHASE 4: OUTPUT
+# ---------------------------------------------------------------------------
+
+generate_briefing() {
+    info "OUTPUT" "Generating briefing.md..."
+
+    local scores_file="$SCORES_DIR/all_scores.jsonl"
+    [[ -s "$scores_file" ]] || error "No scored quotes. Run score phase first."
+
+    local generated
+    generated=$(today)
+
+    {
+        echo "# AI Insights Research Briefing"
+        echo "Generated: ${generated}"
+        echo "Lookback: ${LOOKBACK_DAYS} days | Min score: ${MIN_SCORE}/10"
+        echo ""
+        echo "## Top Quotes (scored ${MIN_SCORE}+/10)"
+        echo ""
+
+        local rank=0
+        while IFS= read -r line; do
+            rank=$((rank + 1))
+            local speaker score text title vid_id start end start_sec reason
+            speaker=$(echo "$line" | jq -r '.speaker')
+            score=$(echo "$line" | jq -r '.score')
+            text=$(echo "$line" | jq -r '.text')
+            title=$(echo "$line" | jq -r '.title')
+            vid_id=$(echo "$line" | jq -r '.vid_id')
+            start=$(echo "$line" | jq -r '.start')
+            end=$(echo "$line" | jq -r '.end')
+            start_sec=$(echo "$line" | jq -r '.start_sec')
+            reason=$(echo "$line" | jq -r '.reason')
+
+            echo "### ${rank}. ${speaker} — ${score}/10"
+            echo "> \"${text}\""
+            echo ""
+            echo "Source: ${title}"
+            echo "Timestamp: ${start}–${end}"
+            echo "URL: https://youtube.com/watch?v=${vid_id}&t=${start_sec}"
+            echo "Why it's good: ${reason}"
+            echo ""
+        done < "$scores_file"
+    } > "$BRIEFING_FILE"
+
+    success "Briefing written to briefing.md"
+}
+
+generate_clips_json() {
+    info "OUTPUT" "Generating clips-research.json..."
+
+    local scores_file="$SCORES_DIR/all_scores.jsonl"
+    [[ -s "$scores_file" ]] || error "No scored quotes. Run score phase first."
+
+    local generated
+    generated=$(today)
+
+    # Build clips array
+    local clips="[]"
+    local n=0
+
+    while IFS= read -r line; do
+        n=$((n + 1))
+        local slug vid_id start end speaker text score
+        slug=$(echo "$line" | jq -r '.slug')
+        vid_id=$(echo "$line" | jq -r '.vid_id')
+        start=$(echo "$line" | jq -r '.start')
+        end=$(echo "$line" | jq -r '.end')
+        speaker=$(echo "$line" | jq -r '.speaker')
+        text=$(echo "$line" | jq -r '.text')
+        score=$(echo "$line" | jq -r '.score')
+
+        # Truncate note to 120 chars
+        local note="${text:0:120}"
+
+        clips=$(echo "$clips" | jq \
+            --arg id "clip-${slug}-${n}" \
+            --arg url "https://youtube.com/watch?v=${vid_id}" \
+            --arg start "$start" \
+            --arg end "$end" \
+            --arg speaker "$speaker" \
+            --arg note "$note" \
+            --argjson score "$score" \
+            '. + [{
+                id: $id,
+                url: $url,
+                start: $start,
+                end: $end,
+                speaker: $speaker,
+                note: $note,
+                score: $score
+            }]')
+    done < "$scores_file"
+
+    jq -n \
+        --arg title "AI Research Compilation - ${generated}" \
+        --argjson clips "$clips" \
+        '{title: $title, clips: $clips}' > "$CLIPS_FILE"
+
+    success "Clips written to clips-research.json ($(echo "$clips" | jq 'length') clips)"
+}
+
+# ---------------------------------------------------------------------------
+# SLIDE GENERATION
+# ---------------------------------------------------------------------------
+
+make_slide() {
+    local id="$1"
+    local speaker="$2"
+    local quote_text="$3"
+    local output_file="$SLIDES_DIR/${id}.mp4"
+
+    if [[ -f "$output_file" ]]; then
+        info "SLIDE" "  Cached: $id"
+        return 0
+    fi
+
+    info "SLIDE" "  Generating slide: $speaker"
+
+    # Escape special characters for ffmpeg drawtext
+    local escaped_quote
+    escaped_quote=$(printf '%s' "$quote_text" | sed "s/'/\\\\\\\\'/g" | sed 's/:/\\:/g' | sed 's/%/%%/g')
+    local escaped_speaker
+    escaped_speaker=$(printf '%s' "$speaker" | sed "s/'/\\\\\\\\'/g" | sed 's/:/\\:/g')
+
+    # Word-wrap: insert newlines roughly every 50 chars at word boundaries
+    local wrapped_quote
+    wrapped_quote=$(echo "$escaped_quote" | fold -s -w 50 | head -8 | tr '\n' '|' | sed 's/|$//')
+    # Replace | with actual newline for drawtext
+    wrapped_quote=$(echo "$wrapped_quote" | sed 's/|/\n/g')
+
+    ffmpeg -y \
+        -f lavfi -i "color=c=0x0f0f1a:s=1920x1080:d=7,format=yuv420p" \
+        -f lavfi -i "anullsrc=r=44100:cl=stereo" \
+        -filter_complex "
+            [0:v]drawbox=x=0:y=0:w=1920:h=1080:c=0x1a1a2e@0.5:t=fill,
+            drawtext=text='${escaped_speaker}':
+                fontcolor=white:fontsize=64:
+                x=(w-text_w)/2:y=h*0.2:
+                font=Arial,
+            drawtext=text='${wrapped_quote}':
+                fontcolor=white:fontsize=36:
+                x=(w-text_w)/2:y=(h-text_h)/2:
+                font=Arial:line_spacing=16,
+            drawtext=text='immediac.com':
+                fontcolor=0x888888:fontsize=24:
+                x=w-text_w-40:y=h-th-30:
+                font=Arial,
+            fade=t=in:st=0:d=0.5,
+            fade=t=out:st=6.5:d=0.5[outv]
+        " \
+        -map "[outv]" -map 1:a \
+        -c:v libx264 -preset fast -crf 20 \
+        -c:a aac -b:a 128k \
+        -shortest \
+        -movflags +faststart \
+        "$output_file" \
+        -loglevel warning
+
+    if [[ -f "$output_file" ]]; then
+        info "SLIDE" "  Created: $output_file"
+    else
+        warn "Slide generation failed for $id"
+    fi
+}
+
+generate_slides() {
+    info "SLIDE" "Generating slides for high-scoring quotes..."
+
+    local scores_file="$SCORES_DIR/all_scores.jsonl"
+    [[ -s "$scores_file" ]] || error "No scored quotes. Run score phase first."
+
+    local n=0 generated=0
+
+    while IFS= read -r line; do
+        n=$((n + 1))
+        local score slug speaker text
+        score=$(echo "$line" | jq -r '.score')
+        slug=$(echo "$line" | jq -r '.slug')
+        speaker=$(echo "$line" | jq -r '.speaker')
+        text=$(echo "$line" | jq -r '.text')
+
+        # Generate slides for score >= 8
+        if [[ "$score" -ge 8 ]] 2>/dev/null; then
+            local slide_id="slide-${slug}-${n}"
+            make_slide "$slide_id" "$speaker" "$text"
+            generated=$((generated + 1))
+
+            # Add slide entry to clips-research.json if it exists
+            if [[ -f "$CLIPS_FILE" ]]; then
+                local updated
+                updated=$(jq \
+                    --arg id "$slide_id" \
+                    --arg speaker "$speaker" \
+                    --arg note "${text:0:120}" \
+                    --argjson score "$score" \
+                    --arg file "research/slides/${slide_id}.mp4" \
+                    '.clips += [{
+                        id: $id,
+                        speaker: $speaker,
+                        note: $note,
+                        score: $score,
+                        type: "slide",
+                        file: $file
+                    }]' "$CLIPS_FILE")
+                echo "$updated" | jq '.' > "$CLIPS_FILE"
+            fi
+        fi
+    done < "$scores_file"
+
+    success "Generated $generated slide(s)"
+}
+
+# ---------------------------------------------------------------------------
+# FULL PIPELINE
+# ---------------------------------------------------------------------------
+
+run_all() {
+    info "PIPELINE" "Starting full research pipeline"
+    echo "  Lookback: ${LOOKBACK_DAYS} days"
+    echo "  Min score: ${MIN_SCORE}/10"
+    echo "  Speakers: ${#SPEAKERS[@]}"
+    echo ""
+
+    search_videos
+    echo ""
+    fetch_captions
+    echo ""
+    score_quotes
+    echo ""
+    generate_briefing
+    generate_clips_json
+    generate_slides
+
+    echo ""
+    success "Research pipeline complete!"
+    echo "  Briefing:  $BRIEFING_FILE"
+    echo "  Clips:     $CLIPS_FILE"
+    echo "  Slides:    $SLIDES_DIR/"
+}
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+usage() {
+    cat <<EOF
+Usage: $0 [command] [options]
+
+Commands:
+  (none)     Run full pipeline
+  search     Search phase only
+  captions   Download captions only
+  score      Re-score existing captions
+  output     Regenerate briefing + clips JSON
+  slides     Regenerate slides only
+
+Options:
+  --days N       Lookback period in days (default: 60)
+  --min-score N  Minimum poignancy score (default: 7)
+  --help         Show this help
+EOF
+}
+
+# Parse options
+COMMAND=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --days)
+            LOOKBACK_DAYS="$2"
+            shift 2
+            ;;
+        --min-score)
+            MIN_SCORE="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        search|captions|score|output|slides)
+            COMMAND="$1"
+            shift
+            ;;
+        *)
+            error "Unknown option: $1. Use --help for usage."
+            ;;
+    esac
+done
+
+check_deps
+ensure_dirs
+
+case "${COMMAND:-all}" in
+    search)   search_videos ;;
+    captions) fetch_captions ;;
+    score)    score_quotes ;;
+    output)
+        generate_briefing
+        generate_clips_json
+        ;;
+    slides)   generate_slides ;;
+    all)      run_all ;;
+esac
