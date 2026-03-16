@@ -1,91 +1,76 @@
 {
   "title": "AI Leadership — CEO Insights Compilation",
-  "description": "Sam Altman + Satya Nadella on AI capabilities, companies, and the future of work",
+  "description": "Sam Altman, Satya Nadella, Jensen Huang on AI capabilities, companies, and the future of work",
   "clips": [
-    {
-      "id": "altman-100x-vision",
-      "url": "https://www.youtube.com/watch?v=Wpxv-8nG8ec",
-      "start": "0:00",
-      "end": "0:30",
-      "note": "Sam Altman — 100x capability vision (OpenAI Town Hall, Jan 2026). Quote: 'Assume we will have a model that is 100 times more capable...' — VERIFY TIMESTAMP"
-    },
     {
       "id": "altman-gpt5-cost",
       "url": "https://www.youtube.com/watch?v=Wpxv-8nG8ec",
-      "start": "0:30",
-      "end": "1:00",
-      "note": "Sam Altman — GPT-5 level intelligence at 100x less cost (Town Hall). Quote: 'GPT-5.2-level intelligence by end of 2027 for at least 100x less' — VERIFY TIMESTAMP"
+      "start": "13:08",
+      "end": "13:45",
+      "note": "Sam Altman — GPT-5.2 level intelligence by end of 2027 at 100x less cost (OpenAI Town Hall, Jan 2026)"
+    },
+    {
+      "id": "altman-100x-vision",
+      "url": "https://www.youtube.com/watch?v=Wpxv-8nG8ec",
+      "start": "13:18",
+      "end": "13:50",
+      "note": "Sam Altman — 100x capable model vision: speed, context, cost, tool calling (OpenAI Town Hall, Jan 2026)"
     },
     {
       "id": "altman-full-ai-companies",
       "url": "https://www.youtube.com/watch?v=eFinF8AJD8A",
-      "start": "0:00",
-      "end": "0:30",
-      "note": "Sam Altman — Full AI companies (Cisco AI Summit, Feb 3 2026). Quote: 'The upper limit, I think, is full AI companies.' — VERIFY TIMESTAMP"
+      "start": "1:10",
+      "end": "1:35",
+      "note": "Sam Altman — 'The upper limit is full AI companies' (Cisco AI Summit, Feb 3 2026)"
     },
     {
       "id": "altman-ai-coworkers",
       "url": "https://www.youtube.com/watch?v=eFinF8AJD8A",
-      "start": "0:30",
-      "end": "1:00",
-      "note": "Sam Altman — AI co-workers warning (Cisco AI Summit). Quote: 'Companies not set up to adopt AI co-workers will be at a huge disadvantage.' — VERIFY TIMESTAMP"
+      "start": "10:58",
+      "end": "11:25",
+      "note": "Sam Altman — Companies not set up for AI co-workers will be at a huge disadvantage (Cisco AI Summit, Feb 3 2026)"
     },
     {
       "id": "altman-run-company",
       "url": "https://www.youtube.com/watch?v=bQITwmqogo8",
-      "start": "0:00",
-      "end": "0:30",
-      "note": "Sam Altman — Models will change what it means to run a company (Morgan Stanley TMT / India AI Summit). Quote: 'Models coming out in the next few months will change what it means to run a good company.' — VERIFY TIMESTAMP"
+      "start": "1:28",
+      "end": "2:00",
+      "note": "Sam Altman — Models will change what it means to run a good company (India AI Summit, Feb 19 2026)"
     },
     {
       "id": "nadella-infinite-minds",
       "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
-      "start": "0:00",
-      "end": "0:30",
-      "note": "Satya Nadella — Managers of infinite minds (WEF Davos, Jan 2026). Quote: 'All of us are going to be managers of infinite minds.' — VERIFY TIMESTAMP"
-    },
-    {
-      "id": "nadella-full-stack-builders",
-      "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
-      "start": "0:30",
-      "end": "1:00",
-      "note": "Satya Nadella — LinkedIn full-stack builders role (WEF Davos). Biggest structural change to software teams in his career. — VERIFY TIMESTAMP"
+      "start": "16:42",
+      "end": "17:10",
+      "note": "Satya Nadella — 'All of us are going to be managers of infinite minds' (WEF Davos, Jan 2026)"
     },
     {
       "id": "nadella-2026-diffusion",
       "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
-      "start": "1:00",
-      "end": "1:30",
-      "note": "Satya Nadella — 2026 as the diffusion year. Quote: 'We have moved past initial discovery and are entering widespread diffusion.' — VERIFY TIMESTAMP"
+      "start": "7:37",
+      "end": "8:05",
+      "note": "Satya Nadella — 2026 as the diffusion year for AI (WEF Davos, Jan 2026)"
     },
     {
       "id": "nadella-models-to-systems",
       "url": "https://www.youtube.com/watch?v=NLsoEJ7WpZY",
-      "start": "1:30",
-      "end": "2:00",
-      "note": "Satya Nadella — From models to systems with scaffolds, memory, agents. — VERIFY TIMESTAMP"
-    }
-    ,
+      "start": "41:20",
+      "end": "41:55",
+      "note": "Satya Nadella — From models to systems: scaffolds, memory, agents, orchestration (WEF Davos, Jan 2026)"
+    },
     {
       "id": "jensen-agentic-inflection",
       "url": "https://www.youtube.com/watch?v=0saM9rLGj0Y",
-      "start": "0:00",
-      "end": "0:40",
-      "note": "Jensen Huang — Agentic AI inflection point (NVIDIA Q4 FY2026 Earnings, Feb 25 2026). Quote: 'The world is now awakened to the agentic AI inflection.' — VERIFY TIMESTAMP"
+      "start": "18:14",
+      "end": "18:45",
+      "note": "Jensen Huang — 'The world is now awakened to the agentic AI inflection' (NVIDIA Q4 FY2026 Earnings, Feb 25 2026)"
     },
     {
-      "id": "jensen-digital-employees",
-      "url": "https://www.youtube.com/watch?v=0saM9rLGj0Y",
-      "start": "0:40",
-      "end": "1:20",
-      "note": "Jensen Huang — 42,000 biological + hundreds of thousands of digital employees (NVIDIA Q4 FY2026 Earnings). IT becomes HR for agentic AI. — VERIFY TIMESTAMP"
-    },
-    {
-      "id": "jensen-ces-computing-revolution",
+      "id": "jensen-ces-computing",
       "url": "https://www.youtube.com/watch?v=M8fL0RUmbP0",
-      "start": "0:00",
-      "end": "0:30",
-      "note": "Jensen Huang — $10 trillion computing revolution, CES 2026 (Jan 5-6). — VERIFY TIMESTAMP"
+      "start": "22:02",
+      "end": "22:35",
+      "note": "Jensen Huang — $10 trillion computing revolution underway (CES 2026, Jan 5-6)"
     }
   ]
 }
