@@ -386,7 +386,7 @@ ${prompt_windows}"
 
         # Single Claude call for all windows in this video
         local result
-        if result=$(echo "$prompt" | timeout 120 claude --permission-mode bypassPermissions --print 2>/dev/null); then
+        if result=$(echo "$prompt" | gtimeout 120 claude --permission-mode bypassPermissions --print 2>/dev/null); then
             # Extract JSON array from response (strip markdown fences if present)
             local json_array
             json_array=$(echo "$result" | sed 's/```json//g; s/```//g' | tr '\n' ' ' | grep -o '\[.*\]' | head -1)
