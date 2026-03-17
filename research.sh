@@ -295,15 +295,17 @@ PYEOF
 }
 
 score_quotes() {
-    info "SCORE" "Scoring caption windows with Claude CLI..."
+    info "SCORE" "Scoring caption windows with Claude CLI (batched per video)..."
 
     [[ -s "$VIDEOS_FILE" ]] || error "No videos found. Run search phase first."
+
+    local MAX_WINDOWS=50
 
     # Collect all scored results
     local all_scores_file="$SCORES_DIR/all_scores.jsonl"
     > "$all_scores_file"
 
-    local vid_count=0 window_count=0 scored_count=0
+    local vid_count=0 total_windows=0 scored_count=0
 
     while IFS= read -r video_line; do
         local vid_id speaker title slug
@@ -317,48 +319,102 @@ score_quotes() {
         vtt_file=$(ls "$CAPTIONS_DIR/${vid_id}"*.vtt 2>/dev/null | head -1)
         [[ -n "$vtt_file" ]] || continue
 
-        vid_count=$((vid_count + 1))
-        info "SCORE" "Processing: $speaker — $title"
-
         # Check for cached scores
         local score_cache="$SCORES_DIR/${vid_id}.jsonl"
-        if [[ -f "$score_cache" ]]; then
+        if [[ -f "$score_cache" && -s "$score_cache" ]]; then
             cat "$score_cache" >> "$all_scores_file"
-            info "SCORE" "  (cached)"
+            info "SCORE" "  (cached) $speaker — $title"
+            vid_count=$((vid_count + 1))
             continue
         fi
 
-        > "$score_cache"
+        # Parse all windows from VTT into parallel arrays
+        local -a w_start_sec=() w_end_sec=() w_start_fmt=() w_end_fmt=() w_text=()
+        while IFS=$'\t' read -r ss es sf ef tx; do
+            # Skip windows with fewer than 8 words
+            local wc
+            wc=$(echo "$tx" | wc -w | tr -d ' ')
+            [[ $wc -ge 8 ]] || continue
+            w_start_sec+=("$ss")
+            w_end_sec+=("$es")
+            w_start_fmt+=("$sf")
+            w_end_fmt+=("$ef")
+            w_text+=("$tx")
+        done < <(parse_vtt_windows "$vtt_file")
 
-        # Parse VTT into windows and score each
-        while IFS=$'\t' read -r start_sec end_sec start_fmt end_fmt text; do
-            window_count=$((window_count + 1))
+        local num_windows=${#w_text[@]}
 
-            # Skip very short or empty text
-            local word_count
-            word_count=$(echo "$text" | wc -w | tr -d ' ')
-            if [[ $word_count -lt 8 ]]; then
-                continue
-            fi
+        # Skip videos with fewer than 15 windows (~2 min of content)
+        if [[ $num_windows -lt 15 ]]; then
+            info "SCORE" "  Skipping $title — only $num_windows windows (< 2 min)"
+            continue
+        fi
 
-            # Score with Claude CLI
-            local prompt="Score this quote 1-10 for poignancy as an AI prediction. Consider: boldness, specificity, quotability, novelty. Only score highly if it contains a genuine prediction or bold claim about AI's future. Return ONLY valid JSON, no markdown: {\"score\": N, \"reason\": \"...\", \"is_prediction\": true/false}
+        # Cap at MAX_WINDOWS (take evenly spaced sample if over limit)
+        local -a idx=()
+        if [[ $num_windows -le $MAX_WINDOWS ]]; then
+            for (( i=0; i<num_windows; i++ )); do idx+=("$i"); done
+        else
+            # Evenly sample MAX_WINDOWS indices
+            for (( i=0; i<MAX_WINDOWS; i++ )); do
+                idx+=("$(( i * num_windows / MAX_WINDOWS ))")
+            done
+        fi
 
-Speaker: ${speaker}
-Quote: \"${text}\""
+        local use_count=${#idx[@]}
+        total_windows=$((total_windows + use_count))
+        vid_count=$((vid_count + 1))
+        info "SCORE" "Processing: $speaker — $title ($use_count windows)"
 
-            local result
-            if result=$(echo "$prompt" | timeout 30 claude --print 2>/dev/null); then
-                # Extract JSON from response (strip markdown code fences if present)
-                local json_result
-                json_result=$(echo "$result" | sed 's/```json//g; s/```//g' | tr -d '\n' | grep -o '{.*}' | head -1)
+        # Build numbered window list for the prompt
+        local prompt_windows=""
+        local win_num=0
+        for i in "${idx[@]}"; do
+            win_num=$((win_num + 1))
+            prompt_windows+="Window ${win_num} [${w_start_fmt[$i]}-${w_end_fmt[$i]}]: ${w_text[$i]}
+"
+        done
 
-                if [[ -n "$json_result" ]]; then
-                    local score is_pred
-                    score=$(echo "$json_result" | jq -r '.score // 0' 2>/dev/null || echo "0")
-                    is_pred=$(echo "$json_result" | jq -r '.is_prediction // false' 2>/dev/null || echo "false")
+        local prompt="Here are ${use_count} caption windows from ${speaker} speaking at \"${title}\".
 
-                    if [[ "$is_pred" == "true" && "$score" -ge "$MIN_SCORE" ]] 2>/dev/null; then
+Score each window 1-10 for poignancy as an AI prediction. Consider: boldness, specificity, quotability, novelty. Only score highly if it contains a genuine prediction or bold claim about AI's future.
+
+Return ONLY a JSON array, no markdown fences, no extra text:
+[{\"window\": 1, \"score\": N, \"reason\": \"brief reason\", \"is_prediction\": true/false}, ...]
+
+${prompt_windows}"
+
+        # Single Claude call for all windows in this video
+        local result
+        if result=$(echo "$prompt" | timeout 120 claude --permission-mode bypassPermissions --print 2>/dev/null); then
+            # Extract JSON array from response (strip markdown fences if present)
+            local json_array
+            json_array=$(echo "$result" | sed 's/```json//g; s/```//g' | tr '\n' ' ' | grep -o '\[.*\]' | head -1)
+
+            if [[ -n "$json_array" ]] && echo "$json_array" | jq '.' >/dev/null 2>&1; then
+                > "$score_cache"
+
+                # Process each scored window
+                local arr_len
+                arr_len=$(echo "$json_array" | jq 'length')
+
+                for (( j=0; j<arr_len; j++ )); do
+                    local w_num w_score w_reason w_pred
+                    w_num=$(echo "$json_array" | jq -r ".[$j].window // 0")
+                    w_score=$(echo "$json_array" | jq -r ".[$j].score // 0")
+                    w_reason=$(echo "$json_array" | jq -r ".[$j].reason // \"\"")
+                    w_pred=$(echo "$json_array" | jq -r ".[$j].is_prediction // false")
+
+                    # Filter: must be a prediction and meet minimum score
+                    if [[ "$w_pred" == "true" && "$w_score" -ge "$MIN_SCORE" ]] 2>/dev/null; then
+                        # Map window number back to original index
+                        local orig_idx
+                        if [[ $w_num -ge 1 && $w_num -le $use_count ]]; then
+                            orig_idx=${idx[$((w_num - 1))]}
+                        else
+                            continue
+                        fi
+
                         scored_count=$((scored_count + 1))
                         local entry
                         entry=$(jq -n \
@@ -366,13 +422,13 @@ Quote: \"${text}\""
                             --arg speaker "$speaker" \
                             --arg title "$title" \
                             --arg slug "$slug" \
-                            --arg text "$text" \
-                            --argjson score "$score" \
-                            --arg reason "$(echo "$json_result" | jq -r '.reason // ""')" \
-                            --arg start_fmt "$start_fmt" \
-                            --arg end_fmt "$end_fmt" \
-                            --argjson start_sec "$start_sec" \
-                            --argjson end_sec "$end_sec" \
+                            --arg text "${w_text[$orig_idx]}" \
+                            --argjson score "$w_score" \
+                            --arg reason "$w_reason" \
+                            --arg start_fmt "${w_start_fmt[$orig_idx]}" \
+                            --arg end_fmt "${w_end_fmt[$orig_idx]}" \
+                            --argjson start_sec "${w_start_sec[$orig_idx]}" \
+                            --argjson end_sec "${w_end_sec[$orig_idx]}" \
                             '{
                                 vid_id: $vid_id,
                                 speaker: $speaker,
@@ -388,13 +444,18 @@ Quote: \"${text}\""
                             }')
                         echo "$entry" >> "$score_cache"
                         echo "$entry" >> "$all_scores_file"
-                        info "SCORE" "  [${score}/10] ${text:0:80}..."
+                        info "SCORE" "  [${w_score}/10] ${w_text[$orig_idx]:0:80}..."
                     fi
-                fi
+                done
+
+                # If no matches, still create the cache file to mark as processed
+                [[ -f "$score_cache" ]] || > "$score_cache"
             else
-                warn "Claude CLI failed/timed out — skipping window"
+                warn "Failed to parse Claude response for $vid_id"
             fi
-        done < <(parse_vtt_windows "$vtt_file")
+        else
+            warn "Claude CLI failed/timed out for $vid_id — skipping"
+        fi
 
     done < "$VIDEOS_FILE"
 
@@ -405,7 +466,7 @@ Quote: \"${text}\""
         echo "$sorted" | jq -c '.[]' > "$all_scores_file"
         local final_count
         final_count=$(wc -l < "$all_scores_file" | tr -d ' ')
-        success "Scored $window_count windows from $vid_count videos. Top $final_count results (score >= $MIN_SCORE)."
+        success "Scored $total_windows windows from $vid_count videos. Found $scored_count hits, top $final_count kept (score >= $MIN_SCORE)."
     else
         warn "No quotes scored above threshold ($MIN_SCORE)."
     fi
