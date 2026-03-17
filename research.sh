@@ -215,77 +215,83 @@ fetch_captions() {
 # ---------------------------------------------------------------------------
 
 # Parse VTT into 7-10 second windows
-# Output: JSON lines with {start_sec, end_sec, start_fmt, end_fmt, text}
+# Output: TAB-delimited lines: start_sec, end_sec, start_fmt, end_fmt, text
 parse_vtt_windows() {
     local vtt_file="$1"
     local window_sec=8  # Target ~8 seconds per window
 
-    # Extract timestamps and text from VTT
-    # VTT format: timestamp lines like "00:01:23.456 --> 00:01:26.789" followed by text
-    awk '
-    BEGIN { collecting=0; text=""; start=""; end="" }
-    /^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/ {
-        if (match($0, /([0-9][0-9]):([0-9][0-9]):([0-9][0-9])\.([0-9]+) --> ([0-9][0-9]):([0-9][0-9]):([0-9][0-9])\.([0-9]+)/, arr)) {
-            s = arr[1]*3600 + arr[2]*60 + arr[3]
-            e = arr[5]*3600 + arr[6]*60 + arr[7]
-            if (start == "") start = s
-            end = e
-        }
-        collecting=1
-        next
-    }
-    /^$/ || /^NOTE/ || /^WEBVTT/ || /^Kind:/ || /^Language:/ {
-        if (text != "" && start != "") {
-            printf "%d\t%d\t%s\n", start, end, text
-            text=""
-            start=""
-            end=""
-        }
-        collecting=0
-        next
-    }
-    collecting==1 {
-        gsub(/<[^>]*>/, "")  # Strip HTML tags
-        if (text != "") text = text " " $0
-        else text = $0
-    }
-    END {
-        if (text != "" && start != "") {
-            printf "%d\t%d\t%s\n", start, end, text
-        }
-    }
-    ' "$vtt_file" | \
-    awk -v window="$window_sec" '
-    BEGIN { FS="\t"; buf_start=-1; buf_end=-1; buf_text="" }
-    {
-        s=$1; e=$2; t=$3
-        if (buf_start < 0) {
-            buf_start=s; buf_end=e; buf_text=t
-            next
-        }
-        if (e - buf_start <= window + 2) {
-            buf_end=e
-            buf_text=buf_text " " t
-        } else {
-            # Emit current window
-            mins=int(buf_start/60)
-            secs=buf_start%60
-            emin=int(buf_end/60)
-            esec=buf_end%60
-            printf "%d\t%d\t%d:%02d\t%d:%02d\t%s\n", buf_start, buf_end, mins, secs, emin, esec, buf_text
-            buf_start=s; buf_end=e; buf_text=t
-        }
-    }
-    END {
-        if (buf_start >= 0) {
-            mins=int(buf_start/60)
-            secs=buf_start%60
-            emin=int(buf_end/60)
-            esec=buf_end%60
-            printf "%d\t%d\t%d:%02d\t%d:%02d\t%s\n", buf_start, buf_end, mins, secs, emin, esec, buf_text
-        }
-    }
-    '
+    python3 - "$vtt_file" "$window_sec" <<'PYEOF'
+import re, sys
+
+vtt_file = sys.argv[1]
+window_sec = int(sys.argv[2])
+
+ts_re = re.compile(
+    r'(\d{2}):(\d{2}):(\d{2})\.\d+\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.\d+'
+)
+tag_re = re.compile(r'<[^>]*>')
+
+# --- Pass 1: extract (start_sec, end_sec, text) cues from VTT ---
+cues = []
+with open(vtt_file, encoding='utf-8', errors='replace') as f:
+    lines = f.readlines()
+
+collecting = False
+start = end = None
+text_parts = []
+
+def emit():
+    if start is not None and text_parts:
+        cues.append((start, end, ' '.join(text_parts)))
+
+for raw in lines:
+    line = raw.rstrip('\n\r')
+    m = ts_re.search(line)
+    if m:
+        s = int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3))
+        e = int(m.group(4))*3600 + int(m.group(5))*60 + int(m.group(6))
+        if start is None:
+            start = s
+        end = e
+        collecting = True
+        continue
+    if line == '' or line.startswith('NOTE') or line.startswith('WEBVTT') \
+       or line.startswith('Kind:') or line.startswith('Language:'):
+        emit()
+        start = end = None
+        text_parts = []
+        collecting = False
+        continue
+    if collecting:
+        cleaned = tag_re.sub('', line)
+        if cleaned.strip():
+            text_parts.append(cleaned.strip())
+
+emit()
+
+# --- Pass 2: group cues into ~window_sec windows ---
+buf_start = buf_end = -1
+buf_text = ''
+
+def flush():
+    if buf_start >= 0 and buf_text:
+        sm, ss = divmod(buf_start, 60)
+        em, es = divmod(buf_end, 60)
+        print(f'{buf_start}\t{buf_end}\t{sm}:{ss:02d}\t{em}:{es:02d}\t{buf_text}')
+
+for s, e, t in cues:
+    if buf_start < 0:
+        buf_start, buf_end, buf_text = s, e, t
+        continue
+    if e - buf_start <= window_sec + 2:
+        buf_end = e
+        buf_text += ' ' + t
+    else:
+        flush()
+        buf_start, buf_end, buf_text = s, e, t
+
+flush()
+PYEOF
 }
 
 score_quotes() {
@@ -343,9 +349,9 @@ Quote: \"${text}\""
 
             local result
             if result=$(echo "$prompt" | timeout 30 claude --print 2>/dev/null); then
-                # Extract JSON from response (handle case where Claude adds extra text)
+                # Extract JSON from response (strip markdown code fences if present)
                 local json_result
-                json_result=$(echo "$result" | grep -o '{[^}]*}' | head -1)
+                json_result=$(echo "$result" | sed 's/```json//g; s/```//g' | tr -d '\n' | grep -o '{.*}' | head -1)
 
                 if [[ -n "$json_result" ]]; then
                     local score is_pred
